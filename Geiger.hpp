@@ -1,7 +1,7 @@
 /*
  Geiger.hpp
  ----------
- 16.03.2019 - ymasur@microclub.ch
+ 31.03.2019 - ymasur@microclub.ch
 
 */
 #include <Arduino.h>
@@ -31,6 +31,11 @@ CLASS char fname[NAME_LENGHT+1];
 //the four chars in fname 'cntg' are replaced by year and month, as 1902
 #define OFFSET_YYMM 20 //offset used to modify the filename
 
+// maximum offset of RTC to be corrected with Unix time (NTP)
+#define MAX_CORRECTION (3600*2)
+// minimum offset of time in second, for RTC adjust
+#define MIN_CORRECTION 3
+
 // global vars are defined here
 
 CLASS bool stored;
@@ -44,15 +49,15 @@ CLASS byte errFile;
 void setup();
 void poll_loop1();
 void poll_loop_5();
-void geiger_display_counts();
 bool IsSyncTime_ss();
 bool IsSyncTime_mm();
 bool IsSyncTime_hh();
+void display_info(String info);
 void geiger_display_counts();
 void geiger_print_counts();
-void geiger_print_counts();
 void irq_func();
-void storeCounts(char *fname, char *dateTimeStr);
+void storeCounts(char *fname, char *dateTimeStr, char mode = '\0');
+void dateTime_up_ascii();
 void log_msg(String msg);
 void webArduino();
 void timeSync();

@@ -1,7 +1,7 @@
 /*
  Geiger_store.cpp
  ----------------
- 18.03.2019 - ymasur@microclub.ch
+ 31.03.2019 - ymasur@microclub.ch
 
  Module store can write datas onto SD/USB storage file
 */
@@ -11,22 +11,23 @@
 #include "Geiger.hpp"
 #include "Geiger_counter.hpp"
 
-#define RETRY 3 //number of retry in write to file (0: mean 1)
-#define RETRY_DELAY 1 // nb of millisecond between retry
+#define RETRY 2 //number of retry in write to file (0: mean 1)
+#define RETRY_DELAY 1 // nb of millisecond between write try
 
-/*  storeCounts()
-    -------------
+/*  toreCounts(char *fname, char *dateTimeStr, char mode='\0')
+    ----------------------------------------------------------
     Store the actual counts in a file on SD card
     Global vars used:
     - char[] fname, contain the full path
     - char[] dateTimeStr, that contain the actual date and time
-      format should be : "yy-mm-dd hh:mm:ss"
+                          01234567890123456789
+      format should be : "yyyy-mm-dd hh:mm:ss"
 
     Modified global vars:
     - fname, the filename in a 8.3 format. 4 first char are modified
     - errFile: false if OK; then true if an error occures
 */
-void storeCounts(char *fname, char *dateTimeStr)
+void storeCounts(char *fname, char *dateTimeStr, char mode = '\0')
 {
   short i = 0;
   // open the file.
@@ -37,6 +38,22 @@ void storeCounts(char *fname, char *dateTimeStr)
   fname[OFFSET_YYMM + 2] = dateTimeStr[5];
   fname[OFFSET_YYMM + 3] = dateTimeStr[6];
 
+  if (mode) // FAST: add the day & "FA"
+  {
+    fname[OFFSET_YYMM + 4] = dateTimeStr[8];
+    fname[OFFSET_YYMM + 5] = dateTimeStr[9];
+    fname[OFFSET_YYMM + 6] = 'F';
+    fname[OFFSET_YYMM + 7] = 'A';
+  }
+  else
+  {
+    fname[OFFSET_YYMM + 4] = 'D';
+    fname[OFFSET_YYMM + 5] = 'A';
+    fname[OFFSET_YYMM + 6] = 'T';
+    fname[OFFSET_YYMM + 7] = 'A';   
+  }
+  
+
   // open the 'fname' file, 3 try...
   do 
   {
@@ -45,9 +62,8 @@ void storeCounts(char *fname, char *dateTimeStr)
     if (filept)  // if the file is available, write to it:
     {
       filept.print(dateTimeStr); filept.print("\t");
-      if (fl_fast)  // Q: fast record enabled?
-      { // A: yes, add "F" in a field
-        filept.print("F\t");
+      if (mode)  // Q: fast record enabled?
+      { // A: yes, get it to record
         filept.println(counter.get_last_fast());
       }
       else  // A: no, get summed minute value (= each hour)
@@ -56,23 +72,23 @@ void storeCounts(char *fname, char *dateTimeStr)
       }
       filept.close();
       errFile = false;
-    }
-    else
+    } // file pt OK
+    else // A: file not availble, retry
     {
       delay(RETRY_DELAY);
     }
   } while(++i < RETRY && errFile == true);
 
-  if (errFile == true) // if the file isn't open, pop up an error:
-  {
+  if (errFile == true) // Q: is the file isn't open?
+  {                    // A: yes, pop up an error:
     String err_msg("Error writing file ");
 
     Serial.print(dateTimeStr);
     Serial.print("\t");  Serial.print(err_msg);
     Serial.println(fname);
-    errFile = true;
+    errFile = true;   // mark it
     err_msg = err_msg + String(fname);
-    log_msg(err_msg);
+    log_msg(err_msg); // try to log (can be in error, too)
   }
 }
 
@@ -81,12 +97,14 @@ void storeCounts(char *fname, char *dateTimeStr)
     Store the message in a logfile on SD card
     The format is: time + TAB + String given + CRLF
 */
-
 void log_msg(String msg)
 {
   const char *flog = "/mnt/sd/arduino/www/cntgeig.log";
   // open the file, 3 try...
   short i = 0;
+
+  display_info(msg);
+  dateTime_up_ascii();
 
   do 
   {

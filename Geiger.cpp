@@ -1,7 +1,7 @@
 /*
  Geiger.cpp
  ----------
- 17.03.2019 - ymasur@microclub.ch
+ 02.04.2019 - ymasur@microclub.ch
   
  Geiger WEB interface and record.
 
@@ -9,10 +9,13 @@
  via the Arduino Yun's built-in webserver using the Bridge library.
 
  The circuit:
+ * Input pin 6 selects the FAST (open) or SLOW (low) mode
+ * INput pin 7 receives pulses of Geiger detectors platine
+ * Output pin 8 give pulse for a LED
+ * Display I2C attached to pin SCL/SDA of Yun
+ * RTC DS3231 attached to I2C
  * USB stick attached to USB slot of the Arduino Yun
- * Pulse of Geiger detectors platine to pin 7 of Yun
- * Display SPI attached to pin SCL/SDA of Yun
-
+ 
  The USB stick must have an empty folder in the root 
  named "arduino" and a subfolder of that named "www". 
  Ex. on a PC with USB: f:\arduino\www
@@ -26,14 +29,21 @@
  */
 #ifndef MAIN  // this is the main module
 #define MAIN
-#define DEBUG 1
+
+#define __YUN   // useful to isolate YUN specific functions 
+#define __FILE  // same, for files operations
+#define DEBUG 1 // level 0 - 1 - 2
 
 #define __PROG__ "Geiger_Yun_LCD"
-#define VERSION "0.60g" // Module version
+#define VERSION "0.71d" // Module version
+#ifdef __YUN
 #include <Bridge.h>
 #include <BridgeServer.h>
 #include <BridgeClient.h>
+#endif
+#ifdef __FILE
 #include <FileIO.h>
+#endif
 #include <string.h>
 #include <Wire.h>
 #include <time.h>
@@ -56,14 +66,36 @@ jm_Scheduler pulse_500ms;
 jm_Scheduler pulse_1s;
 jm_Scheduler led_monostable;
 
-RTC_Millis rtc;
+//only without hardware RTC
+//#define RTC_MILLIS
+//RTC_Millis rtc; //only without hardware RTC 
+RTC_DS3231 rtc;
 DateTime myTime;
 bool timeFirstSync = false;
 
+#ifdef __YUN
 //YunServer server;
 BridgeServer server;
 //YunClient client;
 BridgeClient client;
+#endif
+
+/* blink(short n=1, short t=1)
+   ---------------------------
+   Blink n times, with impuls cycle t (1/10 sec)
+   I/O used: LED13
+   return: -
+*/
+void blink(short n=1, short t=1)
+{
+  for (short i=0; i<n; i++)
+  {
+    digitalWrite(LED13, LOW);
+    delay(50 * t);
+    digitalWrite(LED13, HIGH);
+    delay(50 * t);
+  }
+}
 
 void setup()
 {
@@ -74,35 +106,32 @@ void setup()
   digitalWrite(LED_Y, LOW);
   pinMode(FAST_IN, INPUT_PULLUP);
 
-  //Init Geiger counter and IRQ input
-  attachInterrupt(digitalPinToInterrupt(PULSE_IRQ), irq_func, FALLING);
-  fl_fast = true;   // set mode of record to fast
+  // I2C
+  Wire.begin();
+  // LCD
+  lcd.begin();  lcd.clear_display();
+  display_info("LCD init done..."); delay(1000);
   counter.clear_all();
-
-  // we use serial for log messages
-  Serial.begin(115800);
-  while (!Serial && millis() < 3000); // wait for USB Serial ready
-
-  // RTC, start with a given time
-  rtc.begin(DateTime(F("Jan 01 2019"), F("23:58:30")));
+  //Init Geiger counter and IRQ input. From this point, it counts!
+  attachInterrupt(digitalPinToInterrupt(PULSE_IRQ), irq_func, FALLING);
+  fl_fast = true;   // set default mode of record to fast (pin open = 1)
+  display_info("IRQ started...");
+  blink(10,2);  // blink 10x LED 13 200 ms
     
   // setup path/filename for store
-  // conservative filename 8.3 format
-  // char position in the time string
+  // char position in the path string
   //                       1         2         3
   //             012345678901234567890123456789012
   strncpy(fname, "/mnt/sd/arduino/www/cntgdata.txt", NAME_LENGHT);
 
-  digitalWrite(LED13, HIGH);  // LED ON until LDC show somwhat
-  // I2C
-  Wire.begin();
-
-  // LCD
-  lcd.begin();
-
-  // start scheduler to display, each second the values of counters
-  geiger_LCD.start(geiger_display_counts, jm_Scheduler_time_read() + 1 * TIMESTAMP_1SEC, 1 * TIMESTAMP_1SEC);
-
+ // we use serial for log messages
+  Serial.begin(9600);
+  display_info("Serial started...");
+//  while (!Serial); // wait for USB Serial ready
+  blink(8,10); //LED13 blink 8 pulses, 1 sec
+ 
+#ifdef __YUN
+  display_info("Yun Bridge started  ");
   //Bridge startup
   Bridge.begin();
 
@@ -110,20 +139,32 @@ void setup()
   // (no one from the external network could connect)
   server.listenOnLocalhost();
   server.begin();
-
+  display_info("Yun SD card access  ");
   // SD card access
   FileSystem.begin();
-
+#endif    //   012345678901234567890
+  display_info("Start polling loops ");
   // start polling loops
   pulse_500ms.start(poll_loop_5, 1000L * 500);
-  // pulse_1s.start(poll_loop1, 1000L * 1000); 
-  // now, called by poll_loop_5 at half frequency
 
-  // Setup the IRQ call to the function to handle it
-  attachInterrupt(digitalPinToInterrupt(PULSE_IRQ), irq_func, FALLING);
+  // RTC, start
+  display_info(  "Start RTC, read.... ");
+  timeFirstSync = true;
+  if (! rtc.begin()) 
+  {
+    log_msg("Couldn't find RTC");
+    blink(30,1);  // pulse LED13 6.0 sec at 0.2 Hz 
+  }
 
-  log_msg("Start " __PROG__ " " VERSION "\n");
-  digitalWrite(LED13, LOW);
+  if (rtc.lostPower()) 
+  {       //012345678901234567890
+    log_msg("RTC lost power!     ");
+  }
+
+  myTime = rtc.now(); // take the RTC time  
+  dateTime_up_ascii();  
+  log_msg(__PROG__ " " VERSION "\n");
+
 } // End setup()
 
 /*  main loop
@@ -162,16 +203,24 @@ void check_speed()
   {
     const char *msg;
 
-    fl_fast = digitalRead(FAST_IN);
-    msg = fl_fast ? "Record mode change to FAST" : "Record mode change to SLOW";
+    fl_fast = digitalRead(FAST_IN);// 
+    msg = fl_fast ? "Record mode is FAST " : "Record mode is SLOW ";
     log_msg(msg);
   }
 }
 
 // Running by schedule every 500 ms
+static byte reentry0 = 0;
+
 void poll_loop_5()
 {
   static byte old_sec;
+
+  if (++reentry0 > 1) // check against reentry1 of the 
+  {
+    log_msg("RENTRY Alarm - poll_loop");
+    return;
+  };
   
   check_speed();
   myTime = rtc.now(); // take the actual time  
@@ -185,18 +234,19 @@ void poll_loop_5()
     digitalWrite(LED13, 1); // phase ON
     poll_loop1();
   }
-
+  reentry0--;
 } //end poll loop 0.5 sec
 
 // running by phase of poll_loop_5(), each second
 void poll_loop1()
 {
+
   dateTime_up_ascii();  // update the ASCII version of time
   geiger_display_counts();  // On LCD
   geiger_print_counts();    // On serial
-  if (fl_fast == true && (myTime.second() % 10) == 0) // fast
+  if (fl_fast == true && (myTime.second() % 10) == 0) // fast to be stored?
   {
-    storeCounts(fname, dateTimeStr);
+    storeCounts(fname, dateTimeStr, 'F'); // in FAST recipent
     counter.clear_fast();
   }
 
@@ -212,26 +262,33 @@ void poll_loop1()
       if (myTime.hour() == 0)//Q: is the time at 00:00:00
       { //A: yes update hour counter to day counter
         counter.upd_hour_to_day();
-      } // 00:00:00
+      } // 00:00:00  
+
+      if (myTime.hour() == 3)//Q: is the time at 03:00:00
+      { //A: yes synchronyse RTC to NTP
+        timeSync();
+      }
     } // hh:00:00
-  }  // HH:mm:00
-
-  // only at first RTC synchronisation, try each 10 min
-  if (timeFirstSync == false && (myTime.minute() % 10 == 0) && myTime.second() == 0)
-    timeSync();
-
-  // each day, synchronisation of RTC at 03:15
-  if(myTime.hour() == 3 && myTime.minute() == 15 && myTime.second() == 0)
-    timeSync();
-
+      // timeSync(); // test: each minute
+  } // HH:mm:00
 }// end poll loop 1.0 sec
 
-// LCD display part
-void geiger_display_counts()
+// LCD display info (line 1)
+void display_info(String info)
 {
   lcd.set_cursor(0, 0); // column, line
-  lcd.print("Geiger counter " VERSION);
-  lcd.set_cursor(0, 1);
+  if (info.length() == 0)
+    lcd.print("Geiger counter " VERSION);
+  else
+  {
+    lcd.print(info);
+  }
+}
+
+// Display date, time and counts (lines 2, 3, 4)
+void geiger_display_counts()
+{
+  lcd.set_cursor(0, 1); // column, line
   lcd.print(dateTimeStr);
   lcd.set_cursor(0, 2);
 
@@ -240,16 +297,18 @@ void geiger_display_counts()
     lcd.print_u16(counter.get_live_fast(), 5);
     lcd.print_u16(counter.get_live(), 5);
     lcd.print_u16(counter.get_last_min(), 10);
+    lcd.set_cursor(0, 3);
+    lcd.print_u32(counter.get_min());
+    lcd.print_u32(counter.get_hour());
   }
   else
   {
     lcd.print_u32(counter.get_live());
     lcd.print_u32(counter.get_min());
+    lcd.set_cursor(0, 3);
+    lcd.print_u32(counter.get_hour());
+    lcd.print_u32(counter.get_day());
   }
-
-  lcd.set_cursor(0, 3);
-  lcd.print_u32(counter.get_hour());
-  lcd.print_u32(counter.get_day());
 
 } // geiger_display_counts()
 
@@ -283,6 +342,7 @@ void geiger_print_counts()
  */
 void webArduino()
 {
+#ifdef __YUN  
   // Is there a new client?
   client = server.accept();
   if (client)
@@ -313,10 +373,11 @@ void webArduino()
     // Close connection and free resources.
     client.stop();
   }
+#endif  
 }
 
-/*  getTimeStamp(char *p)
-    ---------------------
+/*  getTimeStamp(char *p, short len)
+    --------------------------------
     This function fill a string with the time stamp
     Vars used:
     - *p : pointer to the destination str
@@ -325,15 +386,21 @@ void webArduino()
     returned value:
     - number of chr written
 */
-static byte reentry = false;
+static byte reentry1 = 0;
 
 int getTimeStamp(char *p, short len)
 {
-  if (reentry)
+  if (reentry1)
+  {
+    log_msg("ALERT reentry getTimeStamp()");
     return 0;
-  reentry = true;
+  }
+    
+  ++reentry1;
   short i = 0;
   char c;
+  #ifdef __YUN
+  log_msg("Get NTP time... ");
   Process time;
   // date is a command line utility to get the date and the time
   // in different formats depending on the additional parameter
@@ -351,8 +418,9 @@ int getTimeStamp(char *p, short len)
     i++;
   }
   p[i] = '\0'; // end of the collected string
+  #endif
 
-  reentry = false;
+  reentry1--;  
   return i;
 }
 
@@ -391,25 +459,40 @@ void timeSync()
     atoi(ntpStr + 12),    // mm
     atoi(ntpStr + 15) );  // ss
 
-#ifdef DEBUG
+#if DEBUG && DEBUG > 0
   Serial.print("ntp time:"); Serial.println(ntp_time.unixtime());
   Serial.print("my  time:"); Serial.println(myTime.unixtime());
 #endif
   sec_correction = ntp_time.unixtime() - myTime.unixtime();
+  // set text for log with the correction value 
+#if DEBUG && DEBUG > 0
   ltoa(sec_correction, str_correction+14, 10);
   log_msg(str_correction);
+#endif  
+  // then, use only positive value 
+  if (sec_correction < 0L) 
+      sec_correction = -sec_correction;
 
-  // Q: first call AND ntp time is in future ?
-  if (timeFirstSync == false && sec_correction > 0L)
+  if (ntp_time.year() < 2019 )
+    {
+#if DEBUG && DEBUG > 0
+      log_msg("NTP oldest as compile time, no time correction done");
+#endif  
+      return;      
+    }
+   
+  timeFirstSync = false;
+
+  if (sec_correction < MIN_CORRECTION)
   {
-    timeFirstSync = true; // A: yes, flag it
-  }
-  else
-  {
-    return;               // A: no, wait
+#if DEBUG > 1   
+    log_msg("Too little, no time correction done");
+#endif    
+    return;
   }
   
   rtc.adjust(ntp_time);   // use ntp time to adjust RTC
+  getTimeStamp(ntpStr, TIME_MSG_LEN);  // reload ASCII version
   log_msg("NTP used");
 }
 

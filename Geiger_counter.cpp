@@ -1,7 +1,7 @@
 /*
  Geiger_counter.cpp
  ------------------
- xx.02.2019 - ymasur@microclub.ch
+ 31.03.2019 - ymasur@microclub.ch
  
  Counter object
 

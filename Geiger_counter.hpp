@@ -1,7 +1,7 @@
 /*
  Geiger_counter.hpp
  ------------------
- 17.03.2019 - ymasur@microclub.ch
+ 31.03.2019 - ymasur@microclub.ch
 
 */
 

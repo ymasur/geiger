@@ -1,12 +1,16 @@
 /*
  Geiger.hpp
  ----------
- 31.03.2019 - ymasur@microclub.ch
+ 16.04.2019 - ymasur@microclub.ch
 
 */
 #include <Arduino.h>
 #ifndef GEIGER_HPP
 #define GEIGER_HPP
+
+#define __PROG__ "Geiger_Yun_LCD"
+#define VERSION "0.85 " // Module version
+#define DEBUG 1 // level 0 - 1 - 2
 
 #ifdef MAIN
   #define CLASS
@@ -16,7 +20,7 @@
 
 // IO pin are defined here
 #define LED13 13    // LED red must be connected to pin 1
-#define LED_Y 8     // IRQ toggle LED, by each pulse gived on interrupt pin
+#define LED_Y 8     // IRQ pulse LED, by each pulse gived on interrupt pin
 #define PULSE_IRQ 7 // Micro Leonardo as 32u4-based 0, 1, 2, 3, 7 available
 #define FAST_IN 6   // Input: 1 = FAST, 0 = SLOW
 
@@ -36,6 +40,9 @@ CLASS char fname[NAME_LENGHT+1];
 // minimum offset of time in second, for RTC adjust
 #define MIN_CORRECTION 3
 
+// freemem
+#define LOW_SRAM_ALERT 400  // Normal use : 910..965 left
+
 // global vars are defined here
 
 CLASS bool stored;
@@ -43,6 +50,8 @@ CLASS bool fl_fast; // true = record each 10 sec.
 CLASS bool min_upd;
 CLASS bool hour_upd;
 CLASS bool day_upd;
+CLASS bool fl_webArduino; //re-entry flag
+CLASS bool fl_LED_Y_On;
 CLASS byte errFile;
 
 // prototypes (needed for VSCode/PlateformIO)
@@ -61,5 +70,10 @@ void dateTime_up_ascii();
 void log_msg(String msg);
 void webArduino();
 void timeSync();
+void Led_Y_mono_start();
+void Led_Y_mono_stop();
+
+int freeMemory();
+;
 
 #endif // GEIGER_HPP

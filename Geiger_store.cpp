@@ -1,7 +1,7 @@
 /*
  Geiger_store.cpp
  ----------------
- 31.03.2019 - ymasur@microclub.ch
+ 09.04.2019 - ymasur@microclub.ch
 
  Module store can write datas onto SD/USB storage file
 */
@@ -11,10 +11,10 @@
 #include "Geiger.hpp"
 #include "Geiger_counter.hpp"
 
-#define RETRY 2 //number of retry in write to file (0: mean 1)
+#define RETRY 3 //number of retry in write to file (0: mean 1)
 #define RETRY_DELAY 1 // nb of millisecond between write try
 
-/*  toreCounts(char *fname, char *dateTimeStr, char mode='\0')
+/*  StoreCounts(char *fname, char *dateTimeStr, char mode='\0')
     ----------------------------------------------------------
     Store the actual counts in a file on SD card
     Global vars used:
@@ -27,7 +27,8 @@
     - fname, the filename in a 8.3 format. 4 first char are modified
     - errFile: false if OK; then true if an error occures
 */
-void storeCounts(char *fname, char *dateTimeStr, char mode = '\0')
+
+void storeCounts(char *fname, char *dateTimeStr, char mode)
 {
   short i = 0;
   // open the file.

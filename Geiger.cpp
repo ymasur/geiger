@@ -1,7 +1,10 @@
 /*
  Geiger.cpp
  ----------
- 02.04.2019 - ymasur@microclub.ch
+ 19.04.2019 - ymasur@microclub.ch
+ 21.04.2019 - call timeSync disabled
+ 28.04.2019 - add check sram, and WD
+ 04.05.2019 - insertion of delay(1) between calls
   
  Geiger WEB interface and record.
 
@@ -32,10 +35,7 @@
 
 #define __YUN   // useful to isolate YUN specific functions 
 #define __FILE  // same, for files operations
-#define DEBUG 1 // level 0 - 1 - 2
 
-#define __PROG__ "Geiger_Yun_LCD"
-#define VERSION "0.71d" // Module version
 #ifdef __YUN
 #include <Bridge.h>
 #include <BridgeServer.h>
@@ -44,6 +44,7 @@
 #ifdef __FILE
 #include <FileIO.h>
 #endif
+#include <avr/wdt.h>
 #include <string.h>
 #include <Wire.h>
 #include <time.h>
@@ -60,15 +61,12 @@ jm_LCM2004_I2C_Plus lcd(0x3F);
 
 
 // list of scheduler used
-jm_Scheduler geiger_LCD;
-jm_Scheduler clock_scheduler;
 jm_Scheduler pulse_500ms;
-jm_Scheduler pulse_1s;
 jm_Scheduler led_monostable;
 
 //only without hardware RTC
 //#define RTC_MILLIS
-//RTC_Millis rtc; //only without hardware RTC 
+//RTC_Millis rtc; 
 RTC_DS3231 rtc;
 DateTime myTime;
 bool timeFirstSync = false;
@@ -82,7 +80,7 @@ BridgeClient client;
 
 /* blink(short n=1, short t=1)
    ---------------------------
-   Blink n times, with impuls cycle t (1/10 sec)
+   Blink n times, with impulse cycle t (1/10 sec)
    I/O used: LED13
    return: -
 */
@@ -161,6 +159,8 @@ void setup()
     log_msg("RTC lost power!     ");
   }
 
+  wdt_enable(WDTO_2S);  // watch dog 2 s
+
   myTime = rtc.now(); // take the RTC time  
   dateTime_up_ascii();  
   log_msg(__PROG__ " " VERSION "\n");
@@ -173,7 +173,20 @@ void setup()
 void loop()
 {
   jm_Scheduler::cycle();
-  webArduino();
+
+  if (!fl_webArduino)
+  {
+    fl_webArduino = true;
+      webArduino();
+    fl_webArduino = false;
+  }
+
+  if (fl_LED_Y_On) // armed by interrupt; disabled by Led_Y_mono_stop()
+  {
+    Led_Y_mono_start();
+    //fl_LED_Y_On = false;
+  }
+    
 } // end loop()
 
 /*  dateTime_up_ascii(void)
@@ -209,16 +222,29 @@ void check_speed()
   }
 }
 
+// Chek if SRAM is enough
+void check_sram()
+{
+  int left_sram = freeMemory(); // gives about 910..965
+  if (left_sram < LOW_SRAM_ALERT)
+  {
+    // display it on 1 st line
+    display_info("SRAM:");
+    lcd.print_u16(left_sram);
+    log_msg("SRAM going low!"); 
+  }
+}
+
 // Running by schedule every 500 ms
-static byte reentry0 = 0;
+static byte reentry_loop = 0;
 
 void poll_loop_5()
 {
   static byte old_sec;
 
-  if (++reentry0 > 1) // check against reentry1 of the 
+  if (++reentry_loop > 1) // check against reentry_ts of the 
   {
-    log_msg("RENTRY Alarm - poll_loop");
+    log_msg("RENTRY in poll_loop!");
     return;
   };
   
@@ -233,8 +259,9 @@ void poll_loop_5()
     old_sec = myTime.second(); // take las value
     digitalWrite(LED13, 1); // phase ON
     poll_loop1();
+    wdt_reset();  // take care of WD!
   }
-  reentry0--;
+  reentry_loop--;
 } //end poll loop 0.5 sec
 
 // running by phase of poll_loop_5(), each second
@@ -266,11 +293,12 @@ void poll_loop1()
 
       if (myTime.hour() == 3)//Q: is the time at 03:00:00
       { //A: yes synchronyse RTC to NTP
-        timeSync();
+       // timeSync();
       }
     } // hh:00:00
       // timeSync(); // test: each minute
   } // HH:mm:00
+  check_sram();
 }// end poll loop 1.0 sec
 
 // LCD display info (line 1)
@@ -289,14 +317,14 @@ void display_info(String info)
 void geiger_display_counts()
 {
   lcd.set_cursor(0, 1); // column, line
-  lcd.print(dateTimeStr);
+  lcd.print(dateTimeStr); delay(1);
   lcd.set_cursor(0, 2);
 
   if (fl_fast)
   {
     lcd.print_u16(counter.get_live_fast(), 5);
     lcd.print_u16(counter.get_live(), 5);
-    lcd.print_u16(counter.get_last_min(), 10);
+    lcd.print_u16(counter.get_last_min(), 10); delay(1);
     lcd.set_cursor(0, 3);
     lcd.print_u32(counter.get_min());
     lcd.print_u32(counter.get_hour());
@@ -304,7 +332,7 @@ void geiger_display_counts()
   else
   {
     lcd.print_u32(counter.get_live());
-    lcd.print_u32(counter.get_min());
+    lcd.print_u32(counter.get_min()); delay(1);
     lcd.set_cursor(0, 3);
     lcd.print_u32(counter.get_hour());
     lcd.print_u32(counter.get_day());
@@ -319,6 +347,7 @@ void geiger_print_counts()
     Serial.print("\t (live, last fast, hour, day)\t");
   else
     Serial.print("\t (live, last min, hour, day)\t");
+  delay(1);
   Serial.print(counter.get_live());
   Serial.print(", ");
 
@@ -327,6 +356,7 @@ void geiger_print_counts()
   else
     Serial.print(counter.get_last_min());
   
+  delay(1);
   Serial.print(", ");
   Serial.print(counter.get_min());  // so, running hour
   Serial.print(", ");
@@ -386,27 +416,27 @@ void webArduino()
     returned value:
     - number of chr written
 */
-static byte reentry1 = 0;
+static byte reentry_ts = 0;
 
 int getTimeStamp(char *p, short len)
 {
-  if (reentry1)
+  if (++reentry_ts > 1)
   {
-    log_msg("ALERT reentry getTimeStamp()");
+    log_msg("RENTRY getTimeStamp!");
     return 0;
   }
-    
-  ++reentry1;
+
   short i = 0;
   char c;
+
   #ifdef __YUN
-  log_msg("Get NTP time... ");
   Process time;
   // date is a command line utility to get the date and the time
   // in different formats depending on the additional parameter
   time.begin("date");
   // parameters: for the complete date yy-mm-dd hh:mm:ss
   time.addParameter("+%y-%m-%d %T");
+  log_msg("Get NTP time...     ");
   time.run(); // run the command
 
   // read the output of the command
@@ -420,7 +450,7 @@ int getTimeStamp(char *p, short len)
   p[i] = '\0'; // end of the collected string
   #endif
 
-  reentry1--;  
+  reentry_ts--;  
   return i;
 }
 
@@ -439,13 +469,18 @@ int getTimeStamp(char *p, short len)
 
     return value: -
 */
+static byte reentry_tsy = 0;
+
 void timeSync()
 {
+  if (++reentry_tsy > 1)
+  {
+    log_msg("Re-entry timeSync!");
+    return;
+  }
   char ntpStr[TIME_MSG_LEN+2];  //string to store the ntp time
   long sec_correction = 0L;     // sign + is to advance our time
-  //                         0123456789012345678901234567890
-  char str_correction[32] = "T Correction: 000000000      \n";
-
+ 
   getTimeStamp(ntpStr, TIME_MSG_LEN);
   // convert ascii time to a a DateTime
   // 01234567890123456
@@ -459,13 +494,16 @@ void timeSync()
     atoi(ntpStr + 12),    // mm
     atoi(ntpStr + 15) );  // ss
 
-#if DEBUG && DEBUG > 0
+#if DEBUG && DEBUG > 1
   Serial.print("ntp time:"); Serial.println(ntp_time.unixtime());
   Serial.print("my  time:"); Serial.println(myTime.unixtime());
 #endif
   sec_correction = ntp_time.unixtime() - myTime.unixtime();
   // set text for log with the correction value 
-#if DEBUG && DEBUG > 0
+#if DEBUG && DEBUG > 1
+ //                         0123456789012345678901234567890
+  char str_correction[32] = "T Correction: 000000000      \n";
+
   ltoa(sec_correction, str_correction+14, 10);
   log_msg(str_correction);
 #endif  
@@ -475,46 +513,50 @@ void timeSync()
 
   if (ntp_time.year() < 2019 )
     {
-#if DEBUG && DEBUG > 0
+#if DEBUG > 0
       log_msg("NTP oldest as compile time, no time correction done");
 #endif  
+      reentry_tsy--;
       return;      
     }
    
   timeFirstSync = false;
 
-  if (sec_correction < MIN_CORRECTION)
-  {
-#if DEBUG > 1   
-    log_msg("Too little, no time correction done");
-#endif    
+  if (sec_correction <= MIN_CORRECTION)
+  { //      012345678901234567890
+    log_msg("Time NTP and RTC OK ");
+    reentry_tsy--;
     return;
   }
   
   rtc.adjust(ntp_time);   // use ntp time to adjust RTC
   getTimeStamp(ntpStr, TIME_MSG_LEN);  // reload ASCII version
-  log_msg("NTP used");
+  //      012345678901234567890
+  log_msg("NTP used for RTC    ");
+  reentry_tsy--;
 }
 
-// Arrête le témoin LED_Y
+// Stop the LED_Y
 void Led_Y_mono_stop()
 {
   digitalWrite(LED_Y, LOW);
+  fl_LED_Y_On = false;
 }
 
-// Démarre un monostable sur témoin LED_Y
-void Led_mono_start()
+// Start one shoot LED_Y
+void Led_Y_mono_start()
 {
-  digitalWrite(LED_Y, HIGH);
-  led_monostable.start(Led_Y_mono_stop, timestamp_read() + 10000L, 0);
+  if (!digitalRead(LED_Y))
+    {  
+      digitalWrite(LED_Y, HIGH);
+      led_monostable.start(Led_Y_mono_stop, timestamp_read() + 5000L, 0);
+    }
 }
 
 // called by IRQ
 void irq_func()
 {
-  if (!digitalRead(LED_Y))
-    Led_mono_start();
-
+  fl_LED_Y_On = true;
   counter.add_live();
 }
 

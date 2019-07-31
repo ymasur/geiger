@@ -9,7 +9,7 @@
 #define GEIGER_HPP
 
 #define __PROG__ "Geiger_Yun_LCD"
-#define VERSION "0.85 " // Module version
+#define VERSION "0.87 " // Module version
 #define DEBUG 1 // level 0 - 1 - 2
 
 #ifdef MAIN

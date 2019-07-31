@@ -293,7 +293,7 @@ void poll_loop1()
 
       if (myTime.hour() == 3)//Q: is the time at 03:00:00
       { //A: yes synchronyse RTC to NTP
-       // timeSync();
+        timeSync();
       }
     } // hh:00:00
       // timeSync(); // test: each minute
@@ -332,10 +332,11 @@ void geiger_display_counts()
   else
   {
     lcd.print_u32(counter.get_live());
-    lcd.print_u32(counter.get_min()); delay(1);
+    lcd.print_u32(counter.get_last_min()); delay(1);
     lcd.set_cursor(0, 3);
+    lcd.print_u32(counter.get_min());
     lcd.print_u32(counter.get_hour());
-    lcd.print_u32(counter.get_day());
+    //lcd.print_u32(counter.get_day());
   }
 
 } // geiger_display_counts()
@@ -543,7 +544,7 @@ void Led_Y_mono_stop()
   fl_LED_Y_On = false;
 }
 
-// Start one shoot LED_Y
+// Start one shoot LED_Y of 5 ms
 void Led_Y_mono_start()
 {
   if (!digitalRead(LED_Y))

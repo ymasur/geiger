@@ -9,8 +9,8 @@
 #define GEIGER_HPP
 
 #define __PROG__ "Geiger_Yun_LCD"
-#define VERSION "0.87 " // Module version
-#define DEBUG 1 // level 0 - 1 - 2
+#define VERSION "0.90 " // Module version
+#define DEBUG 2 // level 0 - 1 - 2
 
 #ifdef MAIN
   #define CLASS
@@ -35,10 +35,10 @@ CLASS char fname[NAME_LENGHT+1];
 //the four chars in fname 'cntg' are replaced by year and month, as 1902
 #define OFFSET_YYMM 20 //offset used to modify the filename
 
-// maximum offset of RTC to be corrected with Unix time (NTP)
+// maximum offset of RTC to be corrected with Unix time (NTP) / not used
 #define MAX_CORRECTION (3600*2)
 // minimum offset of time in second, for RTC adjust
-#define MIN_CORRECTION 3
+#define MIN_CORRECTION 5
 
 // freemem
 #define LOW_SRAM_ALERT 400  // Normal use : 910..965 left
@@ -52,7 +52,7 @@ CLASS bool hour_upd;
 CLASS bool day_upd;
 CLASS bool fl_webArduino; //re-entry flag
 CLASS bool fl_LED_Y_On;
-CLASS byte errFile;
+CLASS bool errFile;
 
 // prototypes (needed for VSCode/PlateformIO)
 void setup();

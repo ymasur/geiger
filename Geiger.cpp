@@ -5,6 +5,8 @@
  21.04.2019 - call timeSync disabled
  28.04.2019 - add check sram, and WD
  04.05.2019 - insertion of delay(1) between calls
+ 02.01.2020 - correction: time correction only done if year is 2020 or more
+ 05.01.2010 - timeSyncStep controls the synchro; removed some entry protections; cosmetic
   
  Geiger WEB interface and record.
 
@@ -41,6 +43,7 @@
 #include <BridgeServer.h>
 #include <BridgeClient.h>
 #endif
+
 #ifdef __FILE
 #include <FileIO.h>
 #endif
@@ -69,7 +72,7 @@ jm_Scheduler led_monostable;
 //RTC_Millis rtc; 
 RTC_DS3231 rtc;
 DateTime myTime;
-bool timeFirstSync = false;
+uint16_t timeSyncStep = 0;
 
 #ifdef __YUN
 //YunServer server;
@@ -147,7 +150,6 @@ void setup()
 
   // RTC, start
   display_info(  "Start RTC, read.... ");
-  timeFirstSync = true;
   if (! rtc.begin()) 
   {
     log_msg("Couldn't find RTC");
@@ -174,7 +176,7 @@ void loop()
 {
   jm_Scheduler::cycle();
 
-  if (!fl_webArduino)
+  if (!fl_webArduino)   // check, again re-entry
   {
     fl_webArduino = true;
       webArduino();
@@ -184,7 +186,6 @@ void loop()
   if (fl_LED_Y_On) // armed by interrupt; disabled by Led_Y_mono_stop()
   {
     Led_Y_mono_start();
-    //fl_LED_Y_On = false;
   }
     
 } // end loop()
@@ -195,24 +196,24 @@ void loop()
     Global var modified:
     - dateTimeStr, with the new value
     Global var used:
-    - myTime
+    - myTime struct
 */
 void dateTime_up_ascii(void)
 {
-  snprintf(dateTimeStr, 32, "%04d-%02d-%02d %02d:%02d:%02d",
-           myTime.year(),
-           myTime.month(),
-           myTime.day(),
-           myTime.hour(),
-           myTime.minute(),
-           myTime.second()
+  snprintf(dateTimeStr, 20, "%04d-%02d-%02d %02d:%02d:%02d",
+           (int) myTime.year(),
+           (int) myTime.month(),
+           (int) myTime.day(),
+           (int) myTime.hour(),
+           (int) myTime.minute(),
+           (int) myTime.second()
            );
 }
 
 // Check speed of record
 void check_speed()
 {
-  if (fl_fast != digitalRead(FAST_IN))
+  if (fl_fast != (bool) digitalRead(FAST_IN))
   {
     const char *msg;
 
@@ -234,6 +235,7 @@ void check_sram()
     log_msg("SRAM going low!"); 
   }
 }
+
 
 // Running by schedule every 500 ms
 static byte reentry_loop = 0;
@@ -271,7 +273,7 @@ void poll_loop1()
   dateTime_up_ascii();  // update the ASCII version of time
   geiger_display_counts();  // On LCD
   geiger_print_counts();    // On serial
-  if (fl_fast == true && (myTime.second() % 10) == 0) // fast to be stored?
+  if (fl_fast == true && (myTime.second() % 10) == 0) // fast mode to be stored?
   {
     storeCounts(fname, dateTimeStr, 'F'); // in FAST recipent
     counter.clear_fast();
@@ -281,26 +283,35 @@ void poll_loop1()
   { //A: yes, 
     counter.upd_live_to_min();//update live counter to minute counter
 
-    if (myTime.minute() == 0) //Q: is the time at hh:00:00
+    if (myTime.minute() == 0) //Q: is the time at hh:00:00 ?
     { //A: yes, 
       storeCounts(fname, dateTimeStr);  // store the hh:00:00 value
       counter.upd_min_to_hour();  // add min counter to hour counter
 
-      if (myTime.hour() == 0)//Q: is the time at 00:00:00
+      if (myTime.hour() == 0)//Q: is the time at 00:00:00 ?
       { //A: yes update hour counter to day counter
         counter.upd_hour_to_day();
+        timeSyncStep = 0; // clear stepper
       } // 00:00:00  
 
-      if (myTime.hour() == 3)//Q: is the time at 03:00:00
+      if (myTime.hour() == 3)//Q: is the time at 03:00:00 ?
       { //A: yes synchronyse RTC to NTP
-        timeSync();
+        timeSyncStep = 1;
       }
     } // hh:00:00
-      // timeSync(); // test: each minute
   } // HH:mm:00
+  timeSync(); // but depend of timeSyncStep value
   check_sram();
 }// end poll loop 1.0 sec
 
+
+/* void display_info(String info)
+   ------------------------------
+   Display the info text on the line 1 of the LCD.
+   By default, title and version are displayed.
+   var used: -
+   return: -
+*/
 // LCD display info (line 1)
 void display_info(String info)
 {
@@ -313,7 +324,14 @@ void display_info(String info)
   }
 }
 
-// Display date, time and counts (lines 2, 3, 4)
+
+/* void geiger_display_counts()
+   ----------------------------
+   Display date, time and counts on lines 2, 3, 4 of the LCD
+   Values depends of the sampling: slow or fast.
+   var used: fl_fast
+   return: -
+*/
 void geiger_display_counts()
 {
   lcd.set_cursor(0, 1); // column, line
@@ -338,9 +356,16 @@ void geiger_display_counts()
     lcd.print_u32(counter.get_hour());
     //lcd.print_u32(counter.get_day());
   }
-
 } // geiger_display_counts()
 
+
+/* void geiger_print_counts()
+   --------------------------
+   Display values on the serial, depending of the speed of sampling: fast or slow.
+   Because the writing is slow, a delay is inserted in the middle.
+   var used: fl_fast
+   return: -   
+*/
 void geiger_print_counts()
 {
   Serial.print(dateTimeStr);
@@ -367,8 +392,8 @@ void geiger_print_counts()
 
 
 /*
- * webArduino()
- * ------------
+ * void webArduino()
+ * -----------------
  * servicing WEB page if needed
  */
 void webArduino()
@@ -405,7 +430,8 @@ void webArduino()
     client.stop();
   }
 #endif  
-}
+} // end of webArduino()
+
 
 /*  getTimeStamp(char *p, short len)
     --------------------------------
@@ -417,16 +443,8 @@ void webArduino()
     returned value:
     - number of chr written
 */
-static byte reentry_ts = 0;
-
 int getTimeStamp(char *p, short len)
 {
-  if (++reentry_ts > 1)
-  {
-    log_msg("RENTRY getTimeStamp!");
-    return 0;
-  }
-
   short i = 0;
   char c;
 
@@ -450,38 +468,46 @@ int getTimeStamp(char *p, short len)
   }
   p[i] = '\0'; // end of the collected string
   #endif
-
-  reentry_ts--;  
   return i;
 }
+
 
 // take the Unix time of the Yun
 #define TIME_MSG_LEN 20
 
 /*  void timeSync()
     ---------------
-    The RTC can be (re)synchronised by the Unix ntp.
-    First, call the time stamp of the Yun
-    The first call take caution of the Unix time: it must be in the futur.
-    This is not the case if the Yun start ans get no Internet connection.
+    The RTC can be (re)synchronised by the Unix networlk time protocol (ntp).
+    First, call the time stamp of the Yun.
+    The timeSyncStep var is set to 1 at 03:00:00, and the sync process is done.
+    Then, it is incremented at each call, usually each second. After 1 hour (at 04:00:00), it can be zeroed.
+    This mechanismus avoid the dobble sync at 03:00:00 in case of rtc is in advance; and at the change of 
+    summer/winter time.
+
+    The call take caution of the Unix time: it must be greather than Unix compile time.
+    This is not the case if the Yun starts and does'nt get Internet connection.
     Var used:
-    - timeFirstSync, as flag for first call
-    - rtc, corrected with the ntp source of time
+    - timeSyncStep, used to have a windows of the sync time
+    - rtc struct, corrected with the ntp source of time
 
     return value: -
 */
-static byte reentry_tsy = 0;
-
 void timeSync()
 {
-  if (++reentry_tsy > 1)
+  char ntpStr[TIME_MSG_LEN+2];  //string to store the ntp time
+  long sec_correction = 0L;     // sign + if ntp is greater as rtc time
+
+  if (timeSyncStep == 0)  // Q: Sync allowed?
+    return;               // A: no, nothing to do
+
+  if (timeSyncStep > 1) // Q: Sync done?
   {
-    log_msg("Re-entry timeSync!");
+    timeSyncStep++;     // A: yes, step forward only
     return;
   }
-  char ntpStr[TIME_MSG_LEN+2];  //string to store the ntp time
-  long sec_correction = 0L;     // sign + is to advance our time
- 
+  
+  timeSyncStep = 1;   // mark as done, for next call
+
   getTimeStamp(ntpStr, TIME_MSG_LEN);
   // convert ascii time to a a DateTime
   // 01234567890123456
@@ -512,21 +538,18 @@ void timeSync()
   if (sec_correction < 0L) 
       sec_correction = -sec_correction;
 
-  if (ntp_time.year() < 2019 )
-    {
+  if (ntp_time.year() < 20 )  // Caution! 20 stand for year 2020
+  {
 #if DEBUG > 0
-      log_msg("NTP oldest as compile time, no time correction done");
+      log_msg("NTP oldest as Unix compile time, not used!");
 #endif  
-      reentry_tsy--;
       return;      
-    }
+  } 
    
-  timeFirstSync = false;
 
   if (sec_correction <= MIN_CORRECTION)
   { //      012345678901234567890
-    log_msg("Time NTP and RTC OK ");
-    reentry_tsy--;
+    log_msg("Time NTP = RTC      ");
     return;
   }
   
@@ -534,8 +557,9 @@ void timeSync()
   getTimeStamp(ntpStr, TIME_MSG_LEN);  // reload ASCII version
   //      012345678901234567890
   log_msg("NTP used for RTC    ");
-  reentry_tsy--;
-}
+
+}// end of timeSync()
+
 
 // Stop the LED_Y
 void Led_Y_mono_stop()
@@ -544,15 +568,17 @@ void Led_Y_mono_stop()
   fl_LED_Y_On = false;
 }
 
+
 // Start one shoot LED_Y of 5 ms
 void Led_Y_mono_start()
 {
   if (!digitalRead(LED_Y))
-    {  
+  {  
       digitalWrite(LED_Y, HIGH);
       led_monostable.start(Led_Y_mono_stop, timestamp_read() + 5000L, 0);
-    }
+  }
 }
+
 
 // called by IRQ
 void irq_func()

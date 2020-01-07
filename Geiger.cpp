@@ -497,16 +497,12 @@ void timeSync()
   char ntpStr[TIME_MSG_LEN+2];  //string to store the ntp time
   long sec_correction = 0L;     // sign + if ntp is greater as rtc time
 
-  if (timeSyncStep == 0)  // Q: Sync allowed?
-    return;               // A: no, nothing to do
+  if (timeSyncStep == 0)  // Q: Sync not started?
+    return;               // A: yes, nothing to do
 
-  if (timeSyncStep > 1) // Q: Sync done?
-  {
-    timeSyncStep++;     // A: yes, step forward only
-    return;
-  }
-  
-  timeSyncStep = 1;   // mark as done, for next call
+  if (timeSyncStep++ > 1) // Q: Sync done?
+    return;               // A: yes, no more to do.
+                          // A: no, Sync start from here
 
   getTimeStamp(ntpStr, TIME_MSG_LEN);
   // convert ascii time to a a DateTime
